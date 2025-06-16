@@ -3,6 +3,11 @@ import yfinance as yf
 from datetime import datetime, timedelta
 
 def get_days_to_expiration(expiration_date, purchase_date):
+    # Convert to date objects if datetime
+    if isinstance(expiration_date, datetime):
+        expiration_date = expiration_date.date()
+    if isinstance(purchase_date, datetime):
+        purchase_date = purchase_date.date()
     return (expiration_date - purchase_date).days
 
 def score_option(stock_price, ma20, ma50, rsi, delta, iv, volume, open_interest,
@@ -142,108 +147,96 @@ def score_option(stock_price, ma20, ma50, rsi, delta, iv, volume, open_interest,
 def main():
     st.title("Short-Term Option Analyzer")
 
-    symbol = st.text_input("Enter stock symbol (e.g. FUBO)").upper()
+    symbol = st.text_input("Symbol (e.g. NAK)").upper()
 
-    if not symbol:
-        st.info("Please enter a stock symbol.")
-        return
-
-    # Fetch expiration dates
-    try:
+    if symbol:
         ticker = yf.Ticker(symbol)
-        expirations = ticker.options
-    except Exception:
-        st.error("Could not fetch option expirations. Check symbol and try again.")
-        return
+        try:
+            expirations = ticker.options
+        except Exception:
+            expirations = []
 
-    if not expirations:
-        st.error("No expiration dates found for this symbol.")
-        return
-
-    expiration = st.selectbox("Select option expiration date", expirations)
-
-    # Compute default purchase date (5 days before expiration or today if that is in the past)
-    expiration_date_dt = datetime.strptime(expiration, "%Y-%m-%d")
-    default_purchase_date = expiration_date_dt - timedelta(days=5)
-    if default_purchase_date.date() < datetime.today().date():
-        default_purchase_date = datetime.today()
-
-    purchase_date = st.date_input("Select purchase date", default_purchase_date.date())
-
-    # Inputs
-    option_type = st.selectbox("Option type", ["call", "put"])
-    strike = st.number_input("Strike price", min_value=0.01, format="%.2f")
-    moneyness_pct = st.number_input("Moneyness % (e.g. -13.7 for 13.7% OTM)", format="%.2f")
-    iv = st.number_input("Implied Volatility (IV %) e.g. 120 for 120%", min_value=0.01, format="%.2f")
-    delta = st.number_input("Delta (0 to 1)", min_value=0.0, max_value=1.0, format="%.4f")
-    premium = st.number_input("Option premium", min_value=0.01, format="%.2f")
-
-    if st.button("Analyze Option"):
-        # Get stock data
-        hist = ticker.history(period="60d")
-        if hist.empty:
-            st.error("Failed to fetch historical stock data.")
+        if expirations:
+            expiration_str = st.selectbox("Expiration Date", expirations)
+        else:
+            st.warning("No expiration dates found for this symbol.")
             return
 
-        current_price = hist['Close'][-1]
-        ma20 = hist['Close'].rolling(window=20).mean()[-1]
-        ma50 = hist['Close'].rolling(window=50).mean()[-1]
+        purchase_date = st.date_input("Purchase Date", datetime.today())
 
-        # RSI calculation
-        delta_price = hist['Close'].diff()
-        gain = delta_price.where(delta_price > 0, 0)
-        loss = -delta_price.where(delta_price < 0, 0)
-        avg_gain = gain.rolling(window=14).mean()[-1]
-        avg_loss = loss.rolling(window=14).mean()[-1]
-        rs = avg_gain / avg_loss if avg_loss != 0 else 0
-        rsi = 100 - (100 / (1 + rs)) if avg_loss != 0 else 100
+        option_type = st.selectbox("Option Type", ["call", "put"])
 
-        # Fetch option chain to get volume & open interest
-        try:
-            chain = ticker.option_chain(expiration)
-            df = chain.calls if option_type == 'call' else chain.puts
-            row = df[df['strike'] == strike]
-            if row.empty:
-                st.warning("Strike price not found in option chain. Volume and Open Interest set to 0.")
-                volume = 0
-                open_interest = 0
-            else:
+        strike = st.number_input("Strike Price", min_value=0.0, format="%.2f")
+
+        moneyness_pct = st.number_input("Moneyness % (e.g. -13.7)", format="%.2f")
+
+        iv = st.number_input("Implied Volatility (IV %) e.g. 120 for 120%", min_value=0.0, format="%.2f")
+
+        delta = st.number_input("Delta (0–1)", min_value=0.0, max_value=1.0, format="%.4f")
+
+        premium = st.number_input("Option Premium", min_value=0.0, format="%.4f")
+
+        if st.button("Analyze Option"):
+
+            hist = ticker.history(period="60d")
+            if hist.empty:
+                st.error("Failed to fetch stock data.")
+                return
+
+            current_price = hist['Close'][-1]
+            ma20 = hist['Close'].rolling(window=20).mean()[-1]
+            ma50 = hist['Close'].rolling(window=50).mean()[-1]
+
+            # RSI calculation
+            delta_price = hist['Close'].diff()
+            gain = delta_price.where(delta_price > 0, 0)
+            loss = -delta_price.where(delta_price < 0, 0)
+            avg_gain = gain.rolling(window=14).mean()[-1]
+            avg_loss = loss.rolling(window=14).mean()[-1]
+            rs = avg_gain / avg_loss if avg_loss != 0 else 0
+            rsi = 100 - (100 / (1 + rs)) if avg_loss != 0 else 100
+
+            try:
+                chain = ticker.option_chain(expiration_str)
+                df = chain.calls if option_type == 'call' else chain.puts
+                row = df[df['strike'] == strike]
+                if row.empty:
+                    st.error("Strike price not found in option chain.")
+                    return
                 volume = int(row['volume'].values[0])
                 open_interest = int(row['openInterest'].values[0])
-        except Exception:
-            st.warning("Could not fetch option chain data. Volume and Open Interest set to 0.")
-            volume = 0
-            open_interest = 0
+            except Exception:
+                st.error("Could not load options data.")
+                return
 
-        days_to_exp = get_days_to_expiration(expiration_date_dt, datetime.combine(purchase_date, datetime.min.time()))
-        moneyness_ratio = 1 + (moneyness_pct / 100)
+            days_to_exp = get_days_to_expiration(datetime.strptime(expiration_str, "%Y-%m-%d"), purchase_date)
+            moneyness_ratio = 1 + (moneyness_pct / 100)
 
-        verdict, reasons = score_option(
-            current_price, ma20, ma50, rsi, delta, iv, volume, open_interest,
-            days_to_exp, option_type, moneyness_pct, moneyness_ratio, premium
-        )
+            verdict, reasons = score_option(
+                current_price, ma20, ma50, rsi, delta, iv, volume, open_interest,
+                days_to_exp, option_type, moneyness_pct, moneyness_ratio, premium
+            )
 
-        st.subheader("Results")
-        st.write(f"Symbol: {symbol}")
-        st.write(f"Option type: {option_type}")
-        st.write(f"Expiration date: {expiration}")
-        st.write(f"Purchase date: {purchase_date}")
-        st.write(f"Strike price: {strike}")
-        st.write(f"Premium: ${premium:.2f}")
-        st.write(f"Delta: {delta:.4f}")
-        st.write(f"IV: {iv:.2f}%")
-        st.write(f"Volume: {volume}")
-        st.write(f"Open Interest: {open_interest}")
-        st.write(f"RSI: {rsi:.2f}")
-        st.write(f"Current stock price: ${current_price:.2f}")
-        st.write(f"MA20: {ma20:.2f}")
-        st.write(f"MA50: {ma50:.2f}")
-        st.write(f"Days to expiration: {days_to_exp}")
-        st.write(f"Moneyness: {moneyness_pct:+.2f}%")
-        st.write(f"Verdict: **{verdict}**")
-        st.write("Reasons:")
-        for reason in reasons:
-            st.write(f"- {reason}")
+            st.subheader("Results")
+            st.write(f"Symbol: {symbol}")
+            st.write(f"Option Type: {option_type}")
+            st.write(f"Expiration Date: {expiration_str}")
+            st.write(f"Strike Price: {strike}")
+            st.write(f"Premium: ${premium:.2f}")
+            st.write(f"Delta: {delta:.4f}")
+            st.write(f"Implied Volatility (IV): {iv:.2f}%")
+            st.write(f"Volume: {volume}")
+            st.write(f"Open Interest: {open_interest}")
+            st.write(f"RSI: {rsi:.2f}")
+            st.write(f"Current Price: ${current_price:.2f}")
+            st.write(f"MA20: {ma20:.2f}")
+            st.write(f"MA50: {ma50:.2f}")
+            st.write(f"Days to Expiration: {days_to_exp}")
+            st.write(f"Moneyness: {moneyness_pct:+.2f}%")
+            st.write(f"Verdict: {verdict}")
+            st.write("Reasons:")
+            for reason in reasons:
+                st.write("- " + reason)
 
 if __name__ == "__main__":
     main()
