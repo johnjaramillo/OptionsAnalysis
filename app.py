@@ -1,9 +1,9 @@
 import streamlit as st
 import yfinance as yf
 from datetime import datetime, timedelta
+import pandas as pd
 
 def get_days_to_expiration(expiration_date, purchase_date):
-    # Convert to date objects if datetime
     if isinstance(expiration_date, datetime):
         expiration_date = expiration_date.date()
     if isinstance(purchase_date, datetime):
@@ -15,33 +15,29 @@ def score_option(stock_price, ma20, ma50, rsi, delta, iv, volume, open_interest,
     score = 0
     reasons = []
 
-    # Trend & RSI
     if option_type == 'call':
         if stock_price > ma20 and stock_price > ma50:
             score += 2
             reasons.append("Strong uptrend (Price > MA20 & MA50)")
         else:
             reasons.append("Weak uptrend or downtrend (Price ≤ MA20 or MA50)")
-
         if 50 <= rsi <= 70:
             score += 1
             reasons.append("RSI in bullish range (50–70)")
         elif rsi > 70:
             reasons.append("RSI high (>70), possible overbought")
-    else:  # put
+    else:
         if stock_price < ma20 and stock_price < ma50:
             score += 2
             reasons.append("Strong downtrend (Price < MA20 & MA50)")
         else:
             reasons.append("Weak downtrend or uptrend (Price ≥ MA20 or MA50)")
-
         if 30 <= rsi <= 50:
             score += 1
             reasons.append("RSI in bearish range (30–50)")
         elif rsi < 30:
             reasons.append("RSI low (<30), possible oversold")
 
-    # Delta
     if delta >= 0.7:
         score += 2
         reasons.append("High delta (≥0.7): Good ITM chance short-term")
@@ -51,7 +47,6 @@ def score_option(stock_price, ma20, ma50, rsi, delta, iv, volume, open_interest,
     else:
         reasons.append(f"Low delta ({delta:.2f}): Lower probability")
 
-    # IV
     if iv > 150:
         reasons.append(f"Very high IV ({iv:.2f}%): High premium but risky")
     elif 80 <= iv <= 150:
@@ -61,7 +56,6 @@ def score_option(stock_price, ma20, ma50, rsi, delta, iv, volume, open_interest,
         score += 1
         reasons.append(f"Low IV ({iv:.2f}%): Possibly undervalued premium")
 
-    # Liquidity
     if volume >= 500:
         if open_interest >= 500:
             score += 2
@@ -78,7 +72,6 @@ def score_option(stock_price, ma20, ma50, rsi, delta, iv, volume, open_interest,
     else:
         reasons.append("Low liquidity: Risk of poor fills")
 
-    # Days to expiration
     if days_to_exp <= 5:
         if delta >= 0.7:
             score += 2
@@ -94,7 +87,6 @@ def score_option(stock_price, ma20, ma50, rsi, delta, iv, volume, open_interest,
     else:
         reasons.append("Expiration beyond 30 days: more uncertain for short-term")
 
-    # Moneyness
     if option_type == 'call':
         if moneyness_ratio >= 1.05:
             score += 2
@@ -120,7 +112,6 @@ def score_option(stock_price, ma20, ma50, rsi, delta, iv, volume, open_interest,
         else:
             reasons.append(f"OTM put (moneyness={moneyness_ratio:.2f}, {moneyness_pct:+.1f}%): Lower chance")
 
-    # Premium
     if premium < 0.25 and delta >= 0.35:
         score += 1
         reasons.append(f"Low premium (${premium:.2f}) with decent delta: good value")
@@ -130,7 +121,6 @@ def score_option(stock_price, ma20, ma50, rsi, delta, iv, volume, open_interest,
     else:
         reasons.append(f"Premium level (${premium:.2f}) is typical")
 
-    # Final verdict
     if score >= 9:
         verdict = "Strong Buy"
     elif score >= 7:
@@ -177,7 +167,6 @@ def main():
         premium = st.number_input("Option Premium", min_value=0.0, format="%.4f")
 
         if st.button("Analyze Option"):
-
             hist = ticker.history(period="60d")
             if hist.empty:
                 st.error("Failed to fetch stock data.")
@@ -187,7 +176,6 @@ def main():
             ma20 = hist['Close'].rolling(window=20).mean()[-1]
             ma50 = hist['Close'].rolling(window=50).mean()[-1]
 
-            # RSI calculation
             delta_price = hist['Close'].diff()
             gain = delta_price.where(delta_price > 0, 0)
             loss = -delta_price.where(delta_price < 0, 0)
@@ -237,6 +225,20 @@ def main():
             st.write("Reasons:")
             for reason in reasons:
                 st.write("- " + reason)
+
+    st.markdown("---")
+    st.header("Upload Unusual Options Activity CSV")
+    uploaded_file = st.file_uploader("Upload CSV File", type=["csv"])
+    if uploaded_file:
+        try:
+            df = pd.read_csv(uploaded_file, delimiter='\t')
+            df_sorted = df.sort_values(by="Price~").head(10)
+            st.dataframe(df_sorted[[
+                "Symbol", "Price~", "Exp Date", "Type", "Strike", "Moneyness",
+                "Bid", "Ask", "Volume", "Open Int", "Vol/OI", "Imp Vol", "Delta", "Time"
+            ]], use_container_width=True)
+        except Exception as e:
+            st.error(f"Failed to process uploaded file: {e}")
 
 if __name__ == "__main__":
     main()
