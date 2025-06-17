@@ -229,24 +229,22 @@ def main():
     st.markdown("---")
     st.header("Upload Unusual Options Activity CSV")
     uploaded_file = st.file_uploader("Upload CSV File", type=["csv"])
-
     if uploaded_file:
-    try:
-        df = pd.read_csv(uploaded_file, delimiter='\t', encoding='utf-8-sig')  # safer encoding
-        df.columns = df.columns.str.strip()  # Remove leading/trailing whitespace
-        st.write("Detected Columns:", list(df.columns))  # Show all columns
+        try:
+            # Read with utf-8-sig to handle BOM if present
+            df = pd.read_csv(uploaded_file, delimiter='\t', encoding='utf-8-sig')
+            # Strip whitespace from column names
+            df.columns = df.columns.str.strip()
+            # Optional: Display columns to debug
+            # st.write("Columns detected:", list(df.columns))
 
-        for col in df.columns:
-            st.write(f"Column: [{col}] -- Length: {len(col)}")
-
-        df_sorted = df.sort_values(by="Price~").head(10)
-        st.dataframe(df_sorted[[
-            "Symbol", "Price~", "Exp Date", "Type", "Strike", "Moneyness",
-            "Bid", "Ask", "Volume", "Open Int", "Vol/OI", "Imp Vol", "Delta", "Time"
-        ]], use_container_width=True)
-    except Exception as e:
-        st.error(f"Failed to process uploaded file: {e}")
-        
+            df_sorted = df.sort_values(by="Price~").head(10)
+            st.dataframe(df_sorted[[
+                "Symbol", "Price~", "Exp Date", "Type", "Strike", "Moneyness",
+                "Bid", "Ask", "Volume", "Open Int", "Vol/OI", "Imp Vol", "Delta", "Time"
+            ]], use_container_width=True)
+        except Exception as e:
+            st.error(f"Failed to process uploaded file: {e}")
 
 if __name__ == "__main__":
     main()
