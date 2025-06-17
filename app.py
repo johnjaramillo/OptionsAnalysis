@@ -135,14 +135,14 @@ def score_option(stock_price, ma20, ma50, rsi, delta, iv, volume, open_interest,
     return verdict, reasons
 
 def main():
-    st.title("📊 Short-Term Options Analyzer")
+    st.title("📊 Short-Term Options Analyzer (Manual Input per Row)")
 
     uploaded_file = st.file_uploader("Upload Unusual Options CSV", type=["csv"])
 
     if uploaded_file:
         try:
             df = pd.read_csv(uploaded_file)
-            df = df.head(10)  # Analyze top 10 rows
+            df = df.head(10)
             results = []
 
             for i, row in df.iterrows():
@@ -182,13 +182,25 @@ def main():
                         days_to_exp = get_days_to_expiration(expiration, purchase_date)
                         moneyness_ratio = 1 + (moneyness_pct / 100)
 
+                        # 🧮 Show stats summary before verdict
+                        st.subheader("📊 Option Stats")
+                        st.write(f"- **Current Price**: ${current_price:.2f}")
+                        st.write(f"- **MA20**: ${ma20:.2f}, **MA50**: ${ma50:.2f}")
+                        st.write(f"- **RSI**: {rsi:.2f}")
+                        st.write(f"- **Delta**: {delta:.2f}")
+                        st.write(f"- **IV**: {iv:.2f}%")
+                        st.write(f"- **Volume**: {volume}")
+                        st.write(f"- **Open Interest**: {open_interest}")
+                        st.write(f"- **Days to Expiration**: {days_to_exp}")
+                        st.write(f"- **Strike**: {strike}, **Moneyness**: {moneyness_pct:+.1f}%")
+
                         verdict, reasons = score_option(
                             current_price, ma20, ma50, rsi, delta, iv, volume, open_interest,
                             days_to_exp, option_type, moneyness_pct, moneyness_ratio, premium
                         )
 
-                        st.markdown(f"### Verdict: **{verdict}**")
-                        st.write("Reasons:")
+                        st.markdown(f"### ✅ Verdict: **{verdict}**")
+                        st.write("📝 Reasons:")
                         for r in reasons:
                             st.write(f"- {r}")
 
