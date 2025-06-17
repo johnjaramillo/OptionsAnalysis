@@ -2,6 +2,8 @@ import streamlit as st
 import yfinance as yf
 from datetime import datetime, timedelta
 import pandas as pd
+import csv
+import io
 
 def get_days_to_expiration(expiration_date, purchase_date):
     if isinstance(expiration_date, datetime):
@@ -153,17 +155,11 @@ def main():
             return
 
         purchase_date = st.date_input("Purchase Date", datetime.today())
-
         option_type = st.selectbox("Option Type", ["call", "put"])
-
         strike = st.number_input("Strike Price", min_value=0.0, format="%.2f")
-
         moneyness_pct = st.number_input("Moneyness % (e.g. -13.7)", format="%.2f")
-
         iv = st.number_input("Implied Volatility (IV %) e.g. 120 for 120%", min_value=0.0, format="%.2f")
-
         delta = st.number_input("Delta (0–1)", min_value=0.0, max_value=1.0, format="%.4f")
-
         premium = st.number_input("Option Premium", min_value=0.0, format="%.4f")
 
         if st.button("Analyze Option"):
@@ -232,22 +228,25 @@ def main():
     uploaded_file = st.file_uploader("Upload CSV File", type=["csv"])
     if uploaded_file:
         try:
-            # Read CSV with tab delimiter and remove whitespace from columns
-            df = pd.read_csv(uploaded_file, delimiter='\t', encoding='utf-8-sig')
-            df.columns = df.columns.str.strip()  # Clean column names
-            st.write("Columns detected in the uploaded file:")
-            st.write(df.columns.tolist())  # Show detected columns for debugging
+            content = uploaded_file.read().decode('utf-8-sig')
+            uploaded_file.seek(0)
+            sniffer = csv.Sniffer()
+            delimiter = sniffer.sniff(content.splitlines()[0]).delimiter
+            st.write(f"🔍 Detected delimiter: `{delimiter}`")
 
-            # After confirming the exact column name for price, replace 'Price~' below as needed
-            price_col = "Price~"
-            if price_col not in df.columns:
-                st.warning(f"Column '{price_col}' not found. Please check the column names above.")
+            df = pd.read_csv(uploaded_file, delimiter=delimiter)
+            df.columns = df.columns.str.strip()
+            st.write("🧾 Parsed columns:")
+            st.write(df.columns.tolist())
+
+            price_col = next((col for col in df.columns if "price" in col.lower()), None)
+            if not price_col:
+                st.warning("❗ No column containing 'Price' found.")
+                return
 
             df_sorted = df.sort_values(by=price_col).head(10)
-            st.dataframe(df_sorted[[
-                "Symbol", "Price~", "Exp Date", "Type", "Strike", "Moneyness",
-                "Bid", "Ask", "Volume", "Open Int", "Vol/OI", "Imp Vol", "Delta", "Time"
-            ]], use_container_width=True)
+            st.dataframe(df_sorted, use_container_width=True)
+
         except Exception as e:
             st.error(f"Failed to process uploaded file: {e}")
 
