@@ -142,7 +142,6 @@ def main():
         try:
             df = pd.read_csv(uploaded_file)
 
-            # Clean and convert for sorting
             df['Price~'] = df['Price~'].replace('[\$,]', '', regex=True).astype(float)
             df = df.sort_values(by='Price~')
             df = df.head(10)
@@ -216,6 +215,8 @@ def main():
 
                 except Exception as e:
                     st.error(f"Error analyzing row {index}: {e}")
+        except Exception as e:
+            st.error(f"Failed to process uploaded file: {e}")
 
 if __name__ == "__main__":
     main()
