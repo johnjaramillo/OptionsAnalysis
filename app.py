@@ -228,17 +228,22 @@ def main():
 
     st.markdown("---")
     st.header("Upload Unusual Options Activity CSV")
+
     uploaded_file = st.file_uploader("Upload CSV File", type=["csv"])
     if uploaded_file:
         try:
-            # Read with utf-8-sig to handle BOM if present
+            # Read CSV with tab delimiter and remove whitespace from columns
             df = pd.read_csv(uploaded_file, delimiter='\t', encoding='utf-8-sig')
-            # Strip whitespace from column names
-            df.columns = df.columns.str.strip()
-            # Optional: Display columns to debug
-            # st.write("Columns detected:", list(df.columns))
+            df.columns = df.columns.str.strip()  # Clean column names
+            st.write("Columns detected in the uploaded file:")
+            st.write(df.columns.tolist())  # Show detected columns for debugging
 
-            df_sorted = df.sort_values(by="Price~").head(10)
+            # After confirming the exact column name for price, replace 'Price~' below as needed
+            price_col = "Price~"
+            if price_col not in df.columns:
+                st.warning(f"Column '{price_col}' not found. Please check the column names above.")
+
+            df_sorted = df.sort_values(by=price_col).head(10)
             st.dataframe(df_sorted[[
                 "Symbol", "Price~", "Exp Date", "Type", "Strike", "Moneyness",
                 "Bid", "Ask", "Volume", "Open Int", "Vol/OI", "Imp Vol", "Delta", "Time"
