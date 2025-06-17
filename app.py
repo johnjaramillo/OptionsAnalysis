@@ -12,6 +12,7 @@ def get_days_to_expiration(expiration_date, purchase_date):
         purchase_date = purchase_date.date()
     return (expiration_date - purchase_date).days
 
+# ... [same scoring function as before, unchanged]
 def score_option(stock_price, ma20, ma50, rsi, delta, iv, volume, open_interest,
                  days_to_exp, option_type, moneyness_pct, moneyness_ratio, premium):
     score = 0
@@ -230,14 +231,9 @@ def main():
         try:
             content = uploaded_file.read().decode('utf-8-sig')
             uploaded_file.seek(0)
-            sniffer = csv.Sniffer()
-            delimiter = sniffer.sniff(content.splitlines()[0]).delimiter
-            st.write(f"🔍 Detected delimiter: `{delimiter}`")
-
+            delimiter = csv.Sniffer().sniff(content.splitlines()[0]).delimiter
             df = pd.read_csv(uploaded_file, delimiter=delimiter)
             df.columns = df.columns.str.strip()
-            st.write("🧾 Parsed columns:")
-            st.write(df.columns.tolist())
 
             price_col = next((col for col in df.columns if "price" in col.lower()), None)
             if not price_col:
