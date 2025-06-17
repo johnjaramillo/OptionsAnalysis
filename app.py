@@ -129,10 +129,13 @@ def score_option(stock_price, ma20, ma50, rsi, delta, iv, volume, open_interest,
         score += 1
         reasons.append(f"Decent balance of intrinsic (${intrinsic_value:.2f}) and extrinsic")
     elif value_ratio > 0.9:
-        score -= 2
-        reasons.append(f"Mostly extrinsic value (${extrinsic_value:.2f}): expensive for risk")
+        score -= 4  # ← was -2
+        reasons.append(f"Mostly extrinsic value (${extrinsic_value:.2f}): very poor value")
     else:
         reasons.append(f"Premium mix ok (${premium:.2f}, {value_ratio:.0%} extrinsic)")
+    if value_ratio > 0.9 and days_to_exp > 30:
+        score -= 1  # Extra penalty for overpaying on long-dated extrinsic
+
 
 
     if score >= 9:
