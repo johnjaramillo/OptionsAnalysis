@@ -1,6 +1,6 @@
 import streamlit as st
 import yfinance as yf
-from datetime import datetime, timedelta
+from datetime import datetime
 import pandas as pd
 
 def get_days_to_expiration(expiration_date, purchase_date):
@@ -124,7 +124,7 @@ def score_option(stock_price, ma20, ma50, rsi, delta, iv, volume, open_interest,
     # Scoring logic based on value breakdown
     if intrinsic_value > 0 and value_ratio <= 0.3:
         score += 2
-        reasons.append(f"Mostly intrinsic value (${intrinsic_value:.2f}): good deal")
+        reasons.append(f"Mostly intrinsic value (${intrinsic_value:.2f}): good deal") 
     elif value_ratio <= 0.6:
         score += 1
         reasons.append(f"Decent balance of intrinsic (${intrinsic_value:.2f}) and extrinsic")
@@ -149,59 +149,38 @@ def score_option(stock_price, ma20, ma50, rsi, delta, iv, volume, open_interest,
     return verdict, reasons
 
 def main():
-    st.title("Short-Term Option Analyzer")
+    st.title("📊 Short-Term Options Analyzer")
 
-    uploaded_file = st.file_uploader("Upload Unusual Options Activity CSV", type=["csv"])
+    uploaded_file = st.file_uploader("Upload CSV File", type=["csv"])
     if uploaded_file:
         try:
-            # Try common delimiters
-            try:
-                df = pd.read_csv(uploaded_file, delimiter=',')
-            except:
-                uploaded_file.seek(0)
-                df = pd.read_csv(uploaded_file, delimiter='\t')
+            df = pd.read_csv(uploaded_file)
 
-            # Debug: Show columns to user
-            st.write("CSV columns detected:", list(df.columns))
+            df['Price~'] = df['Price~'].replace('[\$,]', '', regex=True).astype(float)
+            df = df.sort_values(by='Price~')
+            df = df.head(10)
 
-            # Strip whitespace from columns and remove quotes
-            df.columns = df.columns.str.strip().str.replace('"', '')
+            st.success(f"Analyzing top {len(df)} cheapest options...")
 
-            # Sort by Price~ column (strip % if any and convert)
-            def parse_price(x):
+            for index, row in df.iterrows():
                 try:
-                    return float(str(x).replace('%','').replace(',',''))
-                except:
-                    return 0.0
-            df['Price~'] = df['Price~'].apply(parse_price)
-            df = df.sort_values(by='Price~', ascending=True).head(10)
-
-            for idx, row in df.iterrows():
-                st.markdown(f"### Option {idx+1}: {row['Symbol']} {row['Type']} Strike {row['Strike']} Exp {row['Exp Date']}")
-
-                # User inputs per option:
-                purchase_date = st.date_input(f"Purchase Date for option {idx+1}", datetime.today(), key=f"purchase_date_{idx}")
-                premium = st.number_input(f"Premium for option {idx+1}", min_value=0.0, format="%.4f", key=f"premium_{idx}")
-
-                # Prepare variables
-                try:
+                    symbol = row['Symbol']
                     strike = float(row['Strike'])
-                    moneyness_pct = float(str(row['Moneyness']).replace('%','').replace('+',''))
-                    delta = float(str(row['Delta']).replace('%',''))
-                    iv = float(str(row['Imp Vol']).replace('%',''))
+                    option_type = row['Type'].lower()
+                    moneyness_pct = float(str(row['Moneyness']).replace('%', '').replace('+', '').strip())
+                    delta = float(row['Delta'])
+                    iv = float(str(row['Imp Vol']).replace('%', '').strip())
                     volume = int(row['Volume'])
-                    open_interest = int(row['Open Int'])
-                except Exception as e:
-                    st.error(f"Skipping row {idx} due to data conversion error: {e}")
-                    continue
+                    oi = int(row['Open Int'])
+                    expiration = datetime.strptime(row['Exp Date'], "%Y-%m-%d").date()
 
-                try:
-                    ticker = yf.Ticker(row['Symbol'])
+                    ticker = yf.Ticker(symbol)
                     hist = ticker.history(period="60d")
                     if hist.empty:
-                        st.error(f"Failed to fetch stock data for {row['Symbol']}. Skipping.")
+                        st.warning(f"No price data for {symbol}")
                         continue
-                    current_price = hist['Close'][-1]
+
+                    price = hist['Close'][-1]
                     ma20 = hist['Close'].rolling(window=20).mean()[-1]
                     ma50 = hist['Close'].rolling(window=50).mean()[-1]
 
@@ -213,43 +192,45 @@ def main():
                     rs = avg_gain / avg_loss if avg_loss != 0 else 0
                     rsi = 100 - (100 / (1 + rs)) if avg_loss != 0 else 100
 
+                    st.markdown("---")
+                    st.subheader(f"{symbol} {option_type.upper()} @ {strike} expiring {expiration}")
+
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        premium = st.number_input(f"Premium for {symbol}", min_value=0.0, format="%.2f", key=f"premium_{index}")
+                    with col2:
+                        purchase_date = st.date_input(f"Purchase date for {symbol}", value=datetime.today(), key=f"date_{index}")
+
+                    if st.button(f"Analyze {symbol}", key=f"analyze_{index}"):
+                        days_to_exp = get_days_to_expiration(expiration, purchase_date)
+                        moneyness_ratio = 1 + (moneyness_pct / 100)
+
+                        verdict, reasons = score_option(
+                            price, ma20, ma50, rsi, delta, iv, volume, oi,
+                            days_to_exp, option_type, moneyness_pct, moneyness_ratio, premium
+                        )
+
+                        with st.expander("📈 Stats"):
+                            st.write(f"Current Price: ${price:.2f}")
+                            st.write(f"MA20: ${ma20:.2f}")
+                            st.write(f"MA50: ${ma50:.2f}")
+                            st.write(f"RSI: {rsi:.2f}")
+                            st.write(f"Delta: {delta:.2f}")
+                            st.write(f"IV: {iv:.2f}%")
+                            st.write(f"Volume: {volume}")
+                            st.write(f"Open Interest: {oi}")
+                            st.write(f"Moneyness: {moneyness_pct:+.2f}%")
+                            st.write(f"Days to Expiration: {days_to_exp}")
+
+                        st.markdown(f"**Verdict**: {verdict}")
+                        st.markdown("**Reasons:**")
+                        for reason in reasons:
+                            st.write("- " + reason)
+
                 except Exception as e:
-                    st.error(f"Error fetching stock data for {row['Symbol']}: {e}")
-                    continue
-
-                days_to_exp = get_days_to_expiration(datetime.strptime(row['Exp Date'], "%Y-%m-%d"), purchase_date)
-                moneyness_ratio = 1 + (moneyness_pct / 100)
-                option_type = row['Type'].lower()
-
-                verdict, reasons = score_option(
-                    current_price, ma20, ma50, rsi, delta, iv, volume, open_interest,
-                    days_to_exp, option_type, moneyness_pct, moneyness_ratio, premium
-                )
-
-                st.write("**Stats:**")
-                st.write(f"- Current Price: ${current_price:.2f}")
-                st.write(f"- MA20: {ma20:.2f}")
-                st.write(f"- MA50: {ma50:.2f}")
-                st.write(f"- RSI: {rsi:.2f}")
-                st.write(f"- Delta: {delta:.4f}")
-                st.write(f"- Implied Volatility: {iv:.2f}%")
-                st.write(f"- Volume: {volume}")
-                st.write(f"- Open Interest: {open_interest}")
-                st.write(f"- Days to Expiration: {days_to_exp}")
-                st.write(f"- Moneyness: {moneyness_pct:+.2f}%")
-                st.write(f"- Premium: ${premium:.2f}")
-
-                st.write(f"**Verdict: {verdict}**")
-                st.write("Reasons:")
-                for reason in reasons:
-                    st.write(f"- {reason}")
-
-                st.markdown("---")
-
+                    st.error(f"Error analyzing row {index}: {e}")
         except Exception as e:
             st.error(f"Failed to process uploaded file: {e}")
-    else:
-        st.info("Upload a CSV file to get started.")
 
 if __name__ == "__main__":
     main()
