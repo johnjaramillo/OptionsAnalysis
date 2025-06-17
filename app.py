@@ -135,7 +135,7 @@ def score_option(stock_price, ma20, ma50, rsi, delta, iv, volume, open_interest,
     return verdict, reasons
 
 def main():
-    st.title("📊 Short-Term Options Analyzer (Manual Input per Row)")
+    st.title("📊 Short-Term Options Analyzer")
 
     uploaded_file = st.file_uploader("Upload Unusual Options CSV", type=["csv"])
 
