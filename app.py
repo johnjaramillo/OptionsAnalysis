@@ -4,8 +4,8 @@ from datetime import datetime
 import pandas as pd
 
 def get_days_to_expiration(expiration_date, purchase_date):
-    if isinstance(expiration_date, str):
-        expiration_date = datetime.strptime(expiration_date, "%Y-%m-%d").date()
+    if isinstance(expiration_date, datetime):
+        expiration_date = expiration_date.date()
     if isinstance(purchase_date, datetime):
         purchase_date = purchase_date.date()
     return (expiration_date - purchase_date).days
@@ -135,82 +135,87 @@ def score_option(stock_price, ma20, ma50, rsi, delta, iv, volume, open_interest,
     return verdict, reasons
 
 def main():
-    st.title("📊 Short-Term Options Analyzer (Manual Input per Row)")
+    st.title("📊 Short-Term Options Analyzer")
 
-    uploaded_file = st.file_uploader("Upload Unusual Options CSV", type=["csv"])
-
+    uploaded_file = st.file_uploader("Upload CSV File", type=["csv"])
     if uploaded_file:
         try:
             df = pd.read_csv(uploaded_file)
+
+            # Clean and convert for sorting
+            df['Price~'] = df['Price~'].replace('[\$,]', '', regex=True).astype(float)
+            df = df.sort_values(by='Price~')
             df = df.head(10)
-            results = []
 
-            for i, row in df.iterrows():
-                with st.expander(f"{i+1}. {row['Symbol']} {row['Type']} Exp: {row['Exp Date']}"):
-                    try:
-                        symbol = row['Symbol']
-                        expiration = row['Exp Date']
-                        option_type = row['Type'].lower()
-                        strike = float(row['Strike'])
-                        delta = float(row['Delta'])
+            st.success(f"Analyzing top {len(df)} cheapest options...")
 
-                        moneyness_pct = float(str(row['Moneyness']).replace('%', '').replace('+', '').replace(',', ''))
-                        iv = float(str(row['Imp Vol']).replace('%', '').replace('+', '').replace(',', ''))
-                        volume = int(row['Volume'])
-                        open_interest = int(row['Open Int'])
+            for index, row in df.iterrows():
+                try:
+                    symbol = row['Symbol']
+                    strike = float(row['Strike'])
+                    option_type = row['Type'].lower()
+                    moneyness_pct = float(str(row['Moneyness']).replace('%', '').replace('+', '').strip())
+                    delta = float(row['Delta'])
+                    iv = float(str(row['Imp Vol']).replace('%', '').strip())
+                    volume = int(row['Volume'])
+                    oi = int(row['Open Int'])
+                    expiration = datetime.strptime(row['Exp Date'], "%Y-%m-%d").date()
 
-                        purchase_date = st.date_input(f"📅 Purchase date for {symbol}", key=f"date_{i}")
-                        premium = st.number_input(f"💵 Premium for {symbol}", min_value=0.0, key=f"premium_{i}", format="%.2f")
+                    ticker = yf.Ticker(symbol)
+                    hist = ticker.history(period="60d")
+                    if hist.empty:
+                        st.warning(f"No price data for {symbol}")
+                        continue
 
-                        ticker = yf.Ticker(symbol)
-                        hist = ticker.history(period="60d")
-                        if hist.empty:
-                            st.warning(f"⚠️ No price data for {symbol}")
-                            continue
-                        current_price = hist['Close'][-1]
-                        ma20 = hist['Close'].rolling(window=20).mean()[-1]
-                        ma50 = hist['Close'].rolling(window=50).mean()[-1]
+                    price = hist['Close'][-1]
+                    ma20 = hist['Close'].rolling(window=20).mean()[-1]
+                    ma50 = hist['Close'].rolling(window=50).mean()[-1]
 
-                        delta_price = hist['Close'].diff()
-                        gain = delta_price.where(delta_price > 0, 0)
-                        loss = -delta_price.where(delta_price < 0, 0)
-                        avg_gain = gain.rolling(window=14).mean()[-1]
-                        avg_loss = loss.rolling(window=14).mean()[-1]
-                        rs = avg_gain / avg_loss if avg_loss != 0 else 0
-                        rsi = 100 - (100 / (1 + rs)) if avg_loss != 0 else 100
+                    delta_price = hist['Close'].diff()
+                    gain = delta_price.where(delta_price > 0, 0)
+                    loss = -delta_price.where(delta_price < 0, 0)
+                    avg_gain = gain.rolling(window=14).mean()[-1]
+                    avg_loss = loss.rolling(window=14).mean()[-1]
+                    rs = avg_gain / avg_loss if avg_loss != 0 else 0
+                    rsi = 100 - (100 / (1 + rs)) if avg_loss != 0 else 100
 
+                    st.markdown("---")
+                    st.subheader(f"{symbol} {option_type.upper()} @ {strike} expiring {expiration}")
+
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        premium = st.number_input(f"Premium for {symbol}", min_value=0.0, format="%.2f", key=f"premium_{index}")
+                    with col2:
+                        purchase_date = st.date_input(f"Purchase date for {symbol}", value=datetime.today(), key=f"date_{index}")
+
+                    if st.button(f"Analyze {symbol}", key=f"analyze_{index}"):
                         days_to_exp = get_days_to_expiration(expiration, purchase_date)
                         moneyness_ratio = 1 + (moneyness_pct / 100)
 
-                        # 🧮 Show stats summary before verdict
-                        st.subheader("📊 Option Stats")
-                        st.write(f"- **Current Price**: ${current_price:.2f}")
-                        st.write(f"- **MA20**: ${ma20:.2f}")
-                        st.write(f"- **MA50**: ${ma50:.2f}")
-                        st.write(f"- **RSI**: {rsi:.2f}")
-                        st.write(f"- **Delta**: {delta:.2f}")
-                        st.write(f"- **IV**: {iv:.2f}%")
-                        st.write(f"- **Volume**: {volume}")
-                        st.write(f"- **Open Interest**: {open_interest}")
-                        st.write(f"- **Days to Expiration**: {days_to_exp}")
-                        st.write(f"- **Strike**: {strike}")
-                        st.write(f"- **Moneyness**: {moneyness_pct:+.1f}%")
-
                         verdict, reasons = score_option(
-                            current_price, ma20, ma50, rsi, delta, iv, volume, open_interest,
+                            price, ma20, ma50, rsi, delta, iv, volume, oi,
                             days_to_exp, option_type, moneyness_pct, moneyness_ratio, premium
                         )
 
-                        st.markdown(f"### ✅ Verdict: **{verdict}**")
-                        st.write("📝 Reasons:")
-                        for r in reasons:
-                            st.write(f"- {r}")
+                        with st.expander("📈 Stats"):
+                            st.write(f"Current Price: ${price:.2f}")
+                            st.write(f"MA20: ${ma20:.2f}")
+                            st.write(f"MA50: ${ma50:.2f}")
+                            st.write(f"RSI: {rsi:.2f}")
+                            st.write(f"Delta: {delta:.2f}")
+                            st.write(f"IV: {iv:.2f}%")
+                            st.write(f"Volume: {volume}")
+                            st.write(f"Open Interest: {oi}")
+                            st.write(f"Moneyness: {moneyness_pct:+.2f}%")
+                            st.write(f"Days to Expiration: {days_to_exp}")
 
-                    except Exception as e:
-                        st.error(f"Error analyzing row {i}: {e}")
+                        st.markdown(f"**Verdict**: {verdict}")
+                        st.markdown("**Reasons:**")
+                        for reason in reasons:
+                            st.write("- " + reason)
 
-        except Exception as e:
-            st.error(f"Failed to load file: {e}")
+                except Exception as e:
+                    st.error(f"Error analyzing row {index}: {e}")
 
 if __name__ == "__main__":
     main()
