@@ -185,14 +185,16 @@ def main():
                         # 🧮 Show stats summary before verdict
                         st.subheader("📊 Option Stats")
                         st.write(f"- **Current Price**: ${current_price:.2f}")
-                        st.write(f"- **MA20**: ${ma20:.2f}, **MA50**: ${ma50:.2f}")
+                        st.write(f"- **MA20**: ${ma20:.2f}")
+                        st.write(f"- **MA50**: ${ma50:.2f}")
                         st.write(f"- **RSI**: {rsi:.2f}")
                         st.write(f"- **Delta**: {delta:.2f}")
                         st.write(f"- **IV**: {iv:.2f}%")
                         st.write(f"- **Volume**: {volume}")
                         st.write(f"- **Open Interest**: {open_interest}")
                         st.write(f"- **Days to Expiration**: {days_to_exp}")
-                        st.write(f"- **Strike**: {strike}, **Moneyness**: {moneyness_pct:+.1f}%")
+                        st.write(f"- **Strike**: {strike}")
+                        st.write(f"- **Moneyness**: {moneyness_pct:+.1f}%")
 
                         verdict, reasons = score_option(
                             current_price, ma20, ma50, rsi, delta, iv, volume, open_interest,
