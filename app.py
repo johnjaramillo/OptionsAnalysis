@@ -230,6 +230,12 @@ def main():
     st.header("Upload Unusual Options Activity CSV")
     uploaded_file = st.file_uploader("Upload CSV File", type=["csv"])
     if uploaded_file:
+    try:
+        df = pd.read_csv(uploaded_file, delimiter='\t')  # or delimiter=',' if needed
+        df.columns = df.columns.str.strip()  # Remove hidden spaces
+        st.write("Detected Columns:", list(df.columns))  # <--- Check this output
+
+    if uploaded_file:
         try:
             df = pd.read_csv(uploaded_file, delimiter='\t')
             df_sorted = df.sort_values(by="Price~").head(10)
