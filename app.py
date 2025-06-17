@@ -11,7 +11,7 @@ def get_days_to_expiration(expiration_date, purchase_date):
     return (expiration_date - purchase_date).days
 
 def score_option(stock_price, ma20, ma50, rsi, delta, iv, volume, open_interest,
-                 days_to_exp, option_type, moneyness_pct, moneyness_ratio, premium):
+                 days_to_exp, option_type, moneyness_pct, moneyness_ratio, premium, strike):
     score = 0
     reasons = []
 
@@ -205,10 +205,9 @@ def main():
                         days_to_exp = get_days_to_expiration(expiration, purchase_date)
                         moneyness_ratio = 1 + (moneyness_pct / 100)
 
-                        verdict, reasons = score_option(
-                            price, ma20, ma50, rsi, delta, iv, volume, oi,
-                            days_to_exp, option_type, moneyness_pct, moneyness_ratio, premium
-                        )
+                        verdict, reasons = score_option(price, ma20, ma50, rsi, delta, iv, volume, oi,
+                                                        days_to_exp, option_type, moneyness_pct, moneyness_ratio, premium, strike)
+
 
                         with st.expander("📈 Stats"):
                             st.write(f"Current Price: ${price:.2f}")
