@@ -112,14 +112,28 @@ def score_option(stock_price, ma20, ma50, rsi, delta, iv, volume, open_interest,
         else:
             reasons.append(f"OTM put (moneyness={moneyness_ratio:.2f}, {moneyness_pct:+.1f}%): Lower chance")
 
-    if premium < 0.25 and delta >= 0.35:
+    # Estimate intrinsic value (for calls)
+    if option_type == 'call':
+        intrinsic_value = max(0, stock_price - strike)
+    else:  # puts
+        intrinsic_value = max(0, strike - stock_price)
+
+    extrinsic_value = premium - intrinsic_value
+    value_ratio = extrinsic_value / premium if premium != 0 else 0
+
+    # Scoring logic based on value breakdown
+    if intrinsic_value > 0 and value_ratio <= 0.3:
+        score += 2
+        reasons.append(f"Mostly intrinsic value (${intrinsic_value:.2f}): good deal")
+    elif value_ratio <= 0.6:
         score += 1
-        reasons.append(f"Low premium (${premium:.2f}) with decent delta: good value")
-    elif premium > 1.00 and delta < 0.3:
-        score -= 1
-        reasons.append(f"High premium (${premium:.2f}) with low delta: poor value")
+        reasons.append(f"Decent balance of intrinsic (${intrinsic_value:.2f}) and extrinsic")
+    elif value_ratio > 0.9:
+        score -= 2
+        reasons.append(f"Mostly extrinsic value (${extrinsic_value:.2f}): expensive for risk")
     else:
-        reasons.append(f"Premium level (${premium:.2f}) is typical")
+        reasons.append(f"Premium mix ok (${premium:.2f}, {value_ratio:.0%} extrinsic)")
+
 
     if score >= 9:
         verdict = "Strong Buy"
