@@ -1,192 +1,241 @@
+import streamlit as st
+import yfinance as yf
+from datetime import datetime, timedelta
 import pandas as pd
-import datetime
-app = Flask(__name__)
 
-UPLOAD_FORM = """
-<!doctype html>
-<title>Options Analyzer</title>
-<h1>Upload your CSV</h1>
-<form action="/" method=post enctype=multipart/form-data>
-  <input type=file name=file>
-  <br><br>
-  Premium (per contract): <input type=text name=premium>
-  <br><br>
-  Purchase Date (YYYY-MM-DD): <input type=text name=purchase_date>
-  <br><br>
-  <input type=submit value=Upload>
-</form>
-<pre>{{ output }}</pre>
-"""
+def get_days_to_expiration(expiration_date, purchase_date):
+    if isinstance(expiration_date, datetime):
+        expiration_date = expiration_date.date()
+    if isinstance(purchase_date, datetime):
+        purchase_date = purchase_date.date()
+    return (expiration_date - purchase_date).days
 
-def parse_percentage(val):
-    try:
-        return float(val.strip('%')) / 100
-    except:
-        return None
-
-def parse_float(val):
-    try:
-        return float(val.replace('%','').replace(',','').strip())
-    except:
-        return None
-
-def parse_int(val):
-    try:
-        return int(val.replace(',','').strip())
-    except:
-        return 0
-
-def get_days_to_expiration(exp_date_str, purchase_date_str):
-    try:
-        exp_date = datetime.datetime.strptime(exp_date_str, "%Y-%m-%d")
-        purchase_date = datetime.datetime.strptime(purchase_date_str, "%Y-%m-%d")
-        return (exp_date - purchase_date).days
-    except:
-        return None
-
-def score_option(row, premium, purchase_date):
+def score_option(stock_price, ma20, ma50, rsi, delta, iv, volume, open_interest,
+                 days_to_exp, option_type, moneyness_pct, moneyness_ratio, premium):
     score = 0
     reasons = []
 
-    price = parse_float(row['Price~'])
-    ma20 = parse_float(row.get('MA20', 0))
-    ma50 = parse_float(row.get('MA50', 0))
-    rsi = parse_float(row.get('RSI', 0))
-    delta = parse_float(row.get('Delta'))
-    volume = parse_int(row.get('Volume', 0))
-    open_int = parse_int(row.get('Open Int', 0))
-    iv = parse_percentage(row.get('Imp Vol', '0'))
-    moneyness = parse_percentage(row.get('Moneyness', '0'))
-    days_to_exp = get_days_to_expiration(row['Exp Date'], purchase_date)
-    strike = parse_float(row['Strike'])
-    option_type = row['Type'].lower()
-    stock_price = price
-
-    # Trend
-    if price > ma20 and price > ma50:
-        score += 2
-        reasons.append("Strong uptrend (Price > MA20 & MA50)")
-    elif price > ma20 or price > ma50:
-        score += 1
-        reasons.append("Mild uptrend")
+    if option_type == 'call':
+        if stock_price > ma20 and stock_price > ma50:
+            score += 2
+            reasons.append("Strong uptrend (Price > MA20 & MA50)")
+        else:
+            reasons.append("Weak uptrend or downtrend (Price ≤ MA20 or MA50)")
+        if 50 <= rsi <= 70:
+            score += 1
+            reasons.append("RSI in bullish range (50–70)")
+        elif rsi > 70:
+            reasons.append("RSI high (>70), possible overbought")
     else:
-        score -= 1
-        reasons.append("Weak trend")
+        if stock_price < ma20 and stock_price < ma50:
+            score += 2
+            reasons.append("Strong downtrend (Price < MA20 & MA50)")
+        else:
+            reasons.append("Weak downtrend or uptrend (Price ≥ MA20 or MA50)")
+        if 30 <= rsi <= 50:
+            score += 1
+            reasons.append("RSI in bearish range (30–50)")
+        elif rsi < 30:
+            reasons.append("RSI low (<30), possible oversold")
 
-    # RSI
-    if 50 <= rsi <= 70:
-        score += 1
-        reasons.append("RSI in bullish range (50–70)")
-    elif rsi < 30:
-        score -= 1
-        reasons.append("RSI oversold")
-
-    # Delta
     if delta >= 0.7:
         score += 2
-        reasons.append("High delta (≥ 0.7): Good ITM chance short-term")
-    elif delta >= 0.5:
+        reasons.append("High delta (≥0.7): Good ITM chance short-term")
+    elif 0.35 <= delta < 0.7:
         score += 1
-        reasons.append("Moderate delta")
-    elif delta <= 0.25:
-        score -= 1
-        reasons.append("Low delta")
+        reasons.append("Moderate delta (0.35–0.7): Medium chance")
+    else:
+        reasons.append(f"Low delta ({delta:.2f}): Lower probability")
 
-    # IV
-    if iv > 1.0:
-        score -= 1
-        reasons.append(f"Very high IV ({iv:.2%}): High premium but risky")
-    elif iv > 0.6:
+    if iv > 150:
+        reasons.append(f"Very high IV ({iv:.2f}%): High premium but risky")
+    elif 80 <= iv <= 150:
         score += 1
-        reasons.append(f"High IV: Could benefit sellers")
+        reasons.append(f"Moderate IV ({iv:.2f}%): Normal volatility")
+    else:
+        score += 1
+        reasons.append(f"Low IV ({iv:.2f}%): Possibly undervalued premium")
 
-    # Volume & OI
     if volume >= 500:
-        score += 1
-        reasons.append("High volume (≥ 500)")
-    if open_int >= 500:
-        score += 1
-        reasons.append("Strong open interest (≥ 500)")
-    elif open_int == 0:
-        score -= 1
-        reasons.append("No open interest")
-
-    # Expiration
-    if days_to_exp is not None:
-        if days_to_exp < 15:
-            score -= 2
-            reasons.append(f"Expiration soon ({days_to_exp} days): risk of theta decay")
-        elif days_to_exp < 30:
-            score += 1
-            reasons.append(f"Short-term play ({days_to_exp} days)")
+        if open_interest >= 500:
+            score += 2
+            reasons.append("High liquidity (volume & open interest ≥ 500)")
         else:
-            score += 0
-            reasons.append(f"Expiration beyond 30 days: more uncertain for short-term")
-
-    # Moneyness
-    if moneyness > 1.2:
-        score += 1
-        reasons.append(f"Deep ITM call (moneyness={moneyness:.2f})")
-    elif 1.0 < moneyness <= 1.2:
-        score += 1
-        reasons.append(f"ITM option")
-    elif 0.95 < moneyness <= 1.0:
-        score += 0
-        reasons.append(f"ATM option")
+            score += 1
+            reasons.append("High volume (≥ 500), moderate open interest")
+    elif volume >= 100:
+        if open_interest >= 100:
+            score += 1
+            reasons.append("Moderate liquidity (volume & open interest ≥ 100)")
+        else:
+            reasons.append("Moderate volume, low open interest")
     else:
-        score -= 1
-        reasons.append(f"OTM option")
+        reasons.append("Low liquidity: Risk of poor fills")
 
-    # Premium value analysis
-    if option_type == 'call':
-        intrinsic_value = max(0, stock_price - strike)
-    else:
-        intrinsic_value = max(0, strike - stock_price)
-
-    extrinsic_value = premium - intrinsic_value
-    value_ratio = extrinsic_value / premium if premium != 0 else 0
-
-    if intrinsic_value > 0 and value_ratio <= 0.3:
+    if days_to_exp <= 5:
+        if delta >= 0.7:
+            score += 2
+            reasons.append("Very short time to expiration with high delta: good short-term trade")
+        else:
+            reasons.append("Very short time to expiration with low delta: High risk")
+    elif 6 <= days_to_exp <= 14:
         score += 2
-        reasons.append(f"Mostly intrinsic value (${intrinsic_value:.2f}): good deal")
-    elif value_ratio <= 0.6:
+        reasons.append("Moderate time to expiration (6–14 days): balanced risk/reward")
+    elif 15 <= days_to_exp <= 30:
         score += 1
-        reasons.append(f"Decent balance of intrinsic (${intrinsic_value:.2f}) and extrinsic")
-    elif value_ratio > 0.9:
-        score -= 2
-        reasons.append(f"Mostly extrinsic value (${extrinsic_value:.2f}): expensive for risk")
+        reasons.append("Longer time to expiration (15–30 days): slower expected move")
     else:
-        reasons.append(f"Premium mix ok (${premium:.2f}, {value_ratio:.0%} extrinsic)")
+        reasons.append("Expiration beyond 30 days: more uncertain for short-term")
 
-    verdict = "Buy" if score >= 4 else ("Watch" if score >= 2 else "Avoid")
+    if option_type == 'call':
+        if moneyness_ratio >= 1.05:
+            score += 2
+            reasons.append(f"Deep ITM call (moneyness={moneyness_ratio:.2f}, {moneyness_pct:+.1f}%)")
+        elif 1.0 <= moneyness_ratio < 1.05:
+            score += 1
+            reasons.append(f"Slightly ITM call (moneyness={moneyness_ratio:.2f}, {moneyness_pct:+.1f}%)")
+        elif 0.95 <= moneyness_ratio < 1.0:
+            score += 1
+            reasons.append(f"Near ATM call (moneyness={moneyness_ratio:.2f}, {moneyness_pct:+.1f}%)")
+        else:
+            reasons.append(f"OTM call (moneyness={moneyness_ratio:.2f}, {moneyness_pct:+.1f}%): Lower chance")
+    else:
+        if moneyness_ratio <= 0.95:
+            score += 2
+            reasons.append(f"Deep ITM put (moneyness={moneyness_ratio:.2f}, {moneyness_pct:+.1f}%)")
+        elif 0.95 < moneyness_ratio <= 1.0:
+            score += 1
+            reasons.append(f"Slightly ITM put (moneyness={moneyness_ratio:.2f}, {moneyness_pct:+.1f}%)")
+        elif 1.0 < moneyness_ratio <= 1.05:
+            score += 1
+            reasons.append(f"Near ATM put (moneyness={moneyness_ratio:.2f}, {moneyness_pct:+.1f}%)")
+        else:
+            reasons.append(f"OTM put (moneyness={moneyness_ratio:.2f}, {moneyness_pct:+.1f}%): Lower chance")
+
+    if premium < 0.25 and delta >= 0.35:
+        score += 1
+        reasons.append(f"Low premium (${premium:.2f}) with decent delta: good value")
+    elif premium > 1.00 and delta < 0.3:
+        score -= 1
+        reasons.append(f"High premium (${premium:.2f}) with low delta: poor value")
+    else:
+        reasons.append(f"Premium level (${premium:.2f}) is typical")
+
+    if score >= 9:
+        verdict = "Strong Buy"
+    elif score >= 7:
+        verdict = "Buy"
+    elif score >= 5:
+        verdict = "Mild Buy"
+    elif score >= 3:
+        verdict = "Hold"
+    else:
+        verdict = "Avoid"
+
     return verdict, reasons
 
-@app.route('/', methods=['GET', 'POST'])
-def upload_file():
-    output = ""
-    if request.method == 'POST':
-        file = request.files['file']
-        premium = float(request.form['premium'])
-        purchase_date = request.form['purchase_date']
+def main():
+    st.title("Short-Term Option Analyzer")
 
+    uploaded_file = st.file_uploader("Upload Unusual Options Activity CSV", type=["csv"])
+    if uploaded_file:
         try:
-            df = pd.read_csv(file)
-            df = df.sort_values(by='Price~', ascending=False)
-            results = []
+            # Try common delimiters
+            try:
+                df = pd.read_csv(uploaded_file, delimiter=',')
+            except:
+                uploaded_file.seek(0)
+                df = pd.read_csv(uploaded_file, delimiter='\t')
 
-            for i, row in df.iterrows():
+            # Debug: Show columns to user
+            st.write("CSV columns detected:", list(df.columns))
+
+            # Strip whitespace from columns and remove quotes
+            df.columns = df.columns.str.strip().str.replace('"', '')
+
+            # Sort by Price~ column (strip % if any and convert)
+            def parse_price(x):
                 try:
-                    verdict, reasons = score_option(row, premium, purchase_date)
-                    result = f"{row['Symbol']} ({row['Type']} {row['Strike']} @ {row['Exp Date']})\nVerdict: {verdict}\n\nReasons:\n- " + "\n- ".join(reasons)
-                    results.append(result + "\n" + "="*50 + "\n")
+                    return float(str(x).replace('%','').replace(',',''))
+                except:
+                    return 0.0
+            df['Price~'] = df['Price~'].apply(parse_price)
+            df = df.sort_values(by='Price~', ascending=True).head(10)
+
+            for idx, row in df.iterrows():
+                st.markdown(f"### Option {idx+1}: {row['Symbol']} {row['Type']} Strike {row['Strike']} Exp {row['Exp Date']}")
+
+                # User inputs per option:
+                purchase_date = st.date_input(f"Purchase Date for option {idx+1}", datetime.today(), key=f"purchase_date_{idx}")
+                premium = st.number_input(f"Premium for option {idx+1}", min_value=0.0, format="%.4f", key=f"premium_{idx}")
+
+                # Prepare variables
+                try:
+                    strike = float(row['Strike'])
+                    moneyness_pct = float(str(row['Moneyness']).replace('%','').replace('+',''))
+                    delta = float(str(row['Delta']).replace('%',''))
+                    iv = float(str(row['Imp Vol']).replace('%',''))
+                    volume = int(row['Volume'])
+                    open_interest = int(row['Open Int'])
                 except Exception as e:
-                    results.append(f"Error analyzing row {i}: {e}\n")
+                    st.error(f"Skipping row {idx} due to data conversion error: {e}")
+                    continue
 
-            output = "\n".join(results)
+                try:
+                    ticker = yf.Ticker(row['Symbol'])
+                    hist = ticker.history(period="60d")
+                    if hist.empty:
+                        st.error(f"Failed to fetch stock data for {row['Symbol']}. Skipping.")
+                        continue
+                    current_price = hist['Close'][-1]
+                    ma20 = hist['Close'].rolling(window=20).mean()[-1]
+                    ma50 = hist['Close'].rolling(window=50).mean()[-1]
+
+                    delta_price = hist['Close'].diff()
+                    gain = delta_price.where(delta_price > 0, 0)
+                    loss = -delta_price.where(delta_price < 0, 0)
+                    avg_gain = gain.rolling(window=14).mean()[-1]
+                    avg_loss = loss.rolling(window=14).mean()[-1]
+                    rs = avg_gain / avg_loss if avg_loss != 0 else 0
+                    rsi = 100 - (100 / (1 + rs)) if avg_loss != 0 else 100
+
+                except Exception as e:
+                    st.error(f"Error fetching stock data for {row['Symbol']}: {e}")
+                    continue
+
+                days_to_exp = get_days_to_expiration(datetime.strptime(row['Exp Date'], "%Y-%m-%d"), purchase_date)
+                moneyness_ratio = 1 + (moneyness_pct / 100)
+                option_type = row['Type'].lower()
+
+                verdict, reasons = score_option(
+                    current_price, ma20, ma50, rsi, delta, iv, volume, open_interest,
+                    days_to_exp, option_type, moneyness_pct, moneyness_ratio, premium
+                )
+
+                st.write("**Stats:**")
+                st.write(f"- Current Price: ${current_price:.2f}")
+                st.write(f"- MA20: {ma20:.2f}")
+                st.write(f"- MA50: {ma50:.2f}")
+                st.write(f"- RSI: {rsi:.2f}")
+                st.write(f"- Delta: {delta:.4f}")
+                st.write(f"- Implied Volatility: {iv:.2f}%")
+                st.write(f"- Volume: {volume}")
+                st.write(f"- Open Interest: {open_interest}")
+                st.write(f"- Days to Expiration: {days_to_exp}")
+                st.write(f"- Moneyness: {moneyness_pct:+.2f}%")
+                st.write(f"- Premium: ${premium:.2f}")
+
+                st.write(f"**Verdict: {verdict}**")
+                st.write("Reasons:")
+                for reason in reasons:
+                    st.write(f"- {reason}")
+
+                st.markdown("---")
+
         except Exception as e:
-            output = f"Failed to process uploaded file: {e}"
+            st.error(f"Failed to process uploaded file: {e}")
+    else:
+        st.info("Upload a CSV file to get started.")
 
-    return render_template_string(UPLOAD_FORM, output=output)
-
-if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0')
+if __name__ == "__main__":
+    main()
