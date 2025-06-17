@@ -4,8 +4,8 @@ from datetime import datetime, timedelta
 import pandas as pd
 
 def get_days_to_expiration(expiration_date, purchase_date):
-    if isinstance(expiration_date, datetime):
-        expiration_date = expiration_date.date()
+    if isinstance(expiration_date, str):
+        expiration_date = datetime.strptime(expiration_date, "%Y-%m-%d").date()
     if isinstance(purchase_date, datetime):
         purchase_date = purchase_date.date()
     return (expiration_date - purchase_date).days
@@ -135,37 +135,32 @@ def score_option(stock_price, ma20, ma50, rsi, delta, iv, volume, open_interest,
     return verdict, reasons
 
 def main():
-    st.title("Short-Term Option Analyzer")
+    st.title("📊 Short-Term Options Analyzer")
 
+    uploaded_file = st.file_uploader("Upload Unusual Options Activity CSV", type=["csv"])
     purchase_date = st.date_input("Purchase Date", datetime.today())
-    premium_input = st.number_input("Default Premium for All Options (can be edited per row)", min_value=0.0, format="%.2f")
+    default_premium = st.number_input("Enter estimated premium to use for all options", min_value=0.0, format="%.2f")
 
-    uploaded_file = st.file_uploader("Upload CSV File", type=["csv"])
     if uploaded_file:
         try:
             df = pd.read_csv(uploaded_file)
-            top_rows = df.sort_values(by="Price~").head(10)
+            df = df.head(10)  # Only analyze top 10
             results = []
-            for idx, row in top_rows.iterrows():
+
+            for i, row in df.iterrows():
                 try:
                     symbol = row['Symbol']
-                    expiration_str = row['Exp Date']
+                    expiration = row['Exp Date']
                     option_type = row['Type'].lower()
                     strike = float(row['Strike'])
-
-                    moneyness_str = str(row['Moneyness']).replace('%', '').replace('+', '').replace(',', '')
-                    moneyness_pct = float(moneyness_str)
-
-                    if option_type == 'call':
-                        moneyness_ratio = 1 + (moneyness_pct / 100)
-                    else:
-                        moneyness_ratio = 1 - (moneyness_pct / 100)
-
-                    iv = float(row['Imp Vol'])
                     delta = float(row['Delta'])
-                    premium = premium_input
-                    expiration = datetime.strptime(expiration_str, "%m/%d/%Y")
-                    days_to_exp = get_days_to_expiration(expiration, purchase_date)
+
+                    # Strip % signs
+                    moneyness_pct = float(row['Moneyness'].replace('%', '').replace('+', '').replace(',', ''))
+                    iv = float(row['Imp Vol'].replace('%', '').replace('+', '').replace(',', ''))
+
+                    volume = int(row['Volume'])
+                    open_interest = int(row['Open Int'])
 
                     ticker = yf.Ticker(symbol)
                     hist = ticker.history(period="60d")
@@ -174,6 +169,7 @@ def main():
                     current_price = hist['Close'][-1]
                     ma20 = hist['Close'].rolling(window=20).mean()[-1]
                     ma50 = hist['Close'].rolling(window=50).mean()[-1]
+
                     delta_price = hist['Close'].diff()
                     gain = delta_price.where(delta_price > 0, 0)
                     loss = -delta_price.where(delta_price < 0, 0)
@@ -182,33 +178,37 @@ def main():
                     rs = avg_gain / avg_loss if avg_loss != 0 else 0
                     rsi = 100 - (100 / (1 + rs)) if avg_loss != 0 else 100
 
-                    volume = int(row['Volume'])
-                    open_interest = int(row['Open Int'])
+                    days_to_exp = get_days_to_expiration(expiration, purchase_date)
+                    moneyness_ratio = 1 + (moneyness_pct / 100)
 
                     verdict, reasons = score_option(
                         current_price, ma20, ma50, rsi, delta, iv, volume, open_interest,
-                        days_to_exp, option_type, moneyness_pct, moneyness_ratio, premium
+                        days_to_exp, option_type, moneyness_pct, moneyness_ratio, default_premium
                     )
 
                     results.append({
-                        'Symbol': symbol,
-                        'Strike': strike,
-                        'Type': option_type,
-                        'Exp Date': expiration_str,
-                        'Premium': premium,
-                        'Delta': delta,
-                        'IV': iv,
-                        'Volume': volume,
-                        'Open Int': open_interest,
-                        'Verdict': verdict,
-                        'Reasons': "; ".join(reasons)
+                        "Symbol": symbol,
+                        "Strike": strike,
+                        "Exp Date": expiration,
+                        "Type": option_type,
+                        "Premium": default_premium,
+                        "Delta": delta,
+                        "IV": iv,
+                        "RSI": round(rsi, 2),
+                        "Moneyness": f"{moneyness_pct:+.2f}%",
+                        "Verdict": verdict,
+                        "Reasons": reasons
                     })
                 except Exception as e:
-                    st.warning(f"Error analyzing row {idx}: {e}")
+                    st.warning(f"Error analyzing row {i}: {e}")
 
-            if results:
-                st.subheader("Analysis Results")
-                st.dataframe(pd.DataFrame(results))
+            for result in results:
+                st.subheader(f"{result['Symbol']} {result['Type'].upper()} - Strike {result['Strike']} - Exp {result['Exp Date']}")
+                st.write(f"**Verdict**: {result['Verdict']}")
+                st.write("**Reasons:**")
+                for reason in result["Reasons"]:
+                    st.write("- " + reason)
+
         except Exception as e:
             st.error(f"Failed to process uploaded file: {e}")
 
