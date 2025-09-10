@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import streamlit as st
 from datetime import datetime
+import yfinance as yf
 
 # -----------------------------
 # Helper functions
@@ -19,12 +20,13 @@ def safe_float(val):
     except ValueError:
         return None
 
-def get_days_to_expiration(exp_date_str, purchase_date_str):
+def get_days_to_expiration(exp_date_str, purchase_date):
     """Calculate DTE given expiration date and purchase date."""
     try:
-        exp_date = datetime.strptime(exp_date_str, "%m/%d/%Y")
-        purchase_date = datetime.strptime(purchase_date_str, "%m/%d/%Y")
-        return (exp_date - purchase_date).days
+        exp_date = datetime.strptime(exp_date_str, "%Y-%m-%d")
+        if isinstance(purchase_date, datetime):
+            purchase_date = purchase_date.date()
+        return (exp_date.date() - purchase_date).days
     except Exception:
         return None
 
@@ -53,14 +55,13 @@ def score_option(row, premium, purchase_date):
     # -----------------------------
     # Hard filters & penalties
     # -----------------------------
-    # HARD RULE: avoid very low-delta options
     if delta is None:
         delta = 0.0
     if option_type in ["call", "put"] and delta < 0.35:
         reasons.append(f"Delta too low ({delta:.2f}) — avoid buying low-probability options")
         return "Avoid", reasons
 
-    # Base rules
+    # Trend checks
     if price and ma20 and price > ma20:
         score += 1
         reasons.append("Price above 20-day MA (uptrend)")
@@ -77,9 +78,12 @@ def score_option(row, premium, purchase_date):
         score += 1
         reasons.append("Moderate delta (0.5–0.7)")
 
+    # IV
     if iv and iv >= 150:
         score -= 1
         reasons.append("Very high IV (≥150%): premium expensive/risky")
+
+    # Liquidity
     if vol and vol >= 500:
         score += 1
         reasons.append("High volume (≥500)")
@@ -87,6 +91,7 @@ def score_option(row, premium, purchase_date):
         score += 1
         reasons.append("High open interest (≥500)")
 
+    # Expiration
     if days_to_exp is not None:
         if days_to_exp >= 30:
             score += 1
@@ -95,12 +100,13 @@ def score_option(row, premium, purchase_date):
             score -= 1
             reasons.append("Expiration ≤7 days: higher risk")
 
+    # ITM check
     if moneyness and moneyness > 1.2:
         score += 1
         reasons.append(f"Deep ITM (moneyness={moneyness:.2f})")
 
-    # Extrinsic premium filter
-    if price and delta and strike:
+    # Premium breakdown
+    if price and strike:
         intrinsic = max(price - strike, 0) if option_type == "call" else max(strike - price, 0)
         extrinsic = max(premium - intrinsic, 0)
         value_ratio = extrinsic / premium if premium > 0 else 1
@@ -110,13 +116,11 @@ def score_option(row, premium, purchase_date):
         elif value_ratio > 0.75:
             score -= 2
             reasons.append("Premium mostly extrinsic — weaker trade")
-
-        # Extra penalty when extrinsic heavy AND IV very high
         if value_ratio > 0.7 and iv and iv > 200:
             score -= 1
             reasons.append("High extrinsic + very high IV: extra penalty")
 
-    # Extra penalty for short-dated low-delta options
+    # Short-dated low delta
     if days_to_exp is not None and days_to_exp <= 10 and delta < 0.7:
         score -= 2
         reasons.append("Short-dated (<10d) with sub-0.7 delta: theta risk — penalized")
@@ -133,7 +137,7 @@ def score_option(row, premium, purchase_date):
     else:
         verdict = "Avoid"
 
-    # Add stats for context
+    # Add stats
     reasons.insert(0, f"Stats — Price: {price}, MA20: {ma20}, MA50: {ma50}, Delta: {delta}, RSI: {rsi}, Vol: {vol}, OI: {oi}, IV: {iv}, DTE: {days_to_exp}")
 
     return verdict, reasons
@@ -150,32 +154,26 @@ def main():
         return
 
     df = pd.read_csv(uploaded_file)
-    # Clean up column names
     df.columns = df.columns.str.strip().str.replace('"', "")
-    # Sort by Price
     if "Price~" in df.columns:
         df = df.sort_values(by="Price~", ascending=True)
 
-    # User inputs
-    st.sidebar.header("Trade Inputs")
-    purchase_date = st.sidebar.text_input("Purchase Date (MM/DD/YYYY)", value=datetime.today().strftime("%m/%d/%Y"))
-    premium = st.sidebar.number_input("Premium Paid ($)", min_value=0.01, step=0.01)
-
-    results = []
-    st.subheader("Analysis Results")
-
     for idx, row in df.iterrows():
-        try:
-            verdict, reasons = score_option(row, premium, purchase_date)
-            results.append({"Symbol": row.get("Symbol", f"Row {idx}"), "Verdict": verdict, "Reasons": reasons})
-        except Exception as e:
-            results.append({"Symbol": row.get("Symbol", f"Row {idx}"), "Verdict": "Error", "Reasons": [str(e)]})
+        st.markdown("---")
+        st.subheader(f"{row.get('Symbol', 'N/A')} {row.get('Type', '')} @ {row.get('Strike', 'N/A')} exp {row.get('Exp Date', '')}")
 
-    for r in results:
-        st.write(f"**{r['Symbol']} → Verdict: {r['Verdict']}**")
-        for reason in r["Reasons"]:
-            st.write(f"- {reason}")
-        st.write("---")
+        col1, col2 = st.columns(2)
+        with col1:
+            premium = st.number_input(f"Premium for {row.get('Symbol', '')}", min_value=0.01, step=0.01, key=f"prem_{idx}")
+        with col2:
+            purchase_date = st.date_input(f"Purchase date for {row.get('Symbol', '')}", value=datetime.today(), key=f"date_{idx}")
+
+        if st.button(f"Analyze {row.get('Symbol', '')}", key=f"analyze_{idx}"):
+            verdict, reasons = score_option(row, premium, purchase_date)
+            st.write(f"**Verdict: {verdict}**")
+            st.markdown("**Reasons:**")
+            for r in reasons:
+                st.write("- " + r)
 
 if __name__ == "__main__":
     main()
