@@ -2,197 +2,168 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import numpy as np
+from datetime import datetime
+import ta  # for RSI
 
-st.title("📊 Options Analysis Tool")
+# --- Helper functions ---
 
-# === Upload CSV ===
-uploaded_file = st.file_uploader("Upload your options CSV", type=["csv"])
+def calculate_indicators(ticker):
+    """Fetch historical prices and compute MA20, MA50, RSI."""
+    hist = ticker.history(period="6mo")
+    hist["MA20"] = hist["Close"].rolling(20).mean()
+    hist["MA50"] = hist["Close"].rolling(50).mean()
+    hist["RSI"] = ta.momentum.RSIIndicator(hist["Close"], window=14).rsi()
+    latest = hist.iloc[-1]
+    return latest["MA20"], latest["MA50"], latest["RSI"]
 
-# --- Helper: RSI calculation ---
-def calc_rsi(series, period=14):
-    delta = series.diff()
-    up = delta.clip(lower=0)
-    down = -1 * delta.clip(upper=0)
-    ma_up = up.rolling(period).mean()
-    ma_down = down.rolling(period).mean()
-    rs = ma_up / (ma_down + 1e-9)
-    return 100 - (100 / (1 + rs))
+def score_option(premium, iv, delta, rsi, moneyness, days_to_exp):
+    """Return score and rating for an option contract."""
+    score = 0
+    reasons = []
 
-# --- Helper: get stock indicators ---
-def get_stock_data(symbol):
-    try:
-        ticker = yf.Ticker(symbol)
-        hist = ticker.history(period="6mo")
-        price = hist["Close"].iloc[-1]
-        ma20 = hist["Close"].rolling(20).mean().iloc[-1]
-        ma50 = hist["Close"].rolling(50).mean().iloc[-1]
-        rsi = calc_rsi(hist["Close"], 14).iloc[-1]
-        return price, ma20, ma50, rsi
-    except Exception:
-        return None, None, None, None
+    # Delta
+    if 0.4 <= delta <= 0.6:
+        score += 2
+        reasons.append("Delta in ideal range (0.4–0.6)")
+    elif 0.3 <= delta < 0.4 or 0.6 < delta <= 0.7:
+        score += 1
+        reasons.append("Delta acceptable")
+    else:
+        score -= 1
+        reasons.append("Delta too weak/strong")
 
-if uploaded_file is not None:
-    try:
-        df = pd.read_csv(uploaded_file)
-        df = df.head(25)  # only first 25 rows
-        st.success(f"Loaded {len(df)} rows (showing first 25).")
-    except Exception as e:
-        st.error(f"Failed to read file: {e}")
-        st.stop()
+    # IV
+    if iv < 40:
+        score += 1
+        reasons.append("Low implied volatility")
+    else:
+        score -= 1
+        reasons.append("High implied volatility")
 
-    # === Classify Option ===
-    def classify_option(row, premium, price, ma20, ma50, rsi):
-        reasons = []
-        score = 0
+    # RSI
+    if 40 <= rsi <= 60:
+        score += 1
+        reasons.append("RSI neutral (40–60)")
+    elif rsi < 30:
+        score += 2
+        reasons.append("RSI oversold (<30)")
+    elif rsi > 70:
+        score -= 1
+        reasons.append("RSI overbought (>70)")
 
-        delta = row['Delta']
-        iv = row['IV']
-        volume = row['Volume']
-        oi = row['Open Interest']
-        moneyness = row['Moneyness']
-        days_to_exp = row['Days to Expiration']
+    # Moneyness
+    if -5 <= moneyness <= 5:
+        score += 2
+        reasons.append("At/near the money")
+    elif -10 <= moneyness <= 10:
+        score += 1
+        reasons.append("Reasonably close to the money")
+    else:
+        score -= 1
+        reasons.append("Too far in/out of the money")
 
-        # 1. Trend
-        if price and ma20 and ma50:
-            if price > ma20 and price > ma50:
-                score += 2
-                reasons.append("Strong uptrend (Price > MA20 & MA50)")
-            elif price > ma20 or price > ma50:
-                score += 1
-                reasons.append("Moderate uptrend (Price > one MA)")
+    # Days to Expiration
+    if 20 <= days_to_exp <= 60:
+        score += 2
+        reasons.append("Good expiration window (20–60 days)")
+    elif 10 <= days_to_exp < 20 or 60 < days_to_exp <= 90:
+        score += 1
+        reasons.append("Okay expiration window")
+    else:
+        score -= 1
+        reasons.append("Poor expiration window")
+
+    # Premium rule of thumb (relative to moneyness)
+    value_ratio = premium / max(1, abs(moneyness))
+    if value_ratio < 0.5:
+        score += 1
+        reasons.append("Premium seems cheap")
+    elif value_ratio > 0.9 and days_to_exp > 30:
+        score -= 1
+        reasons.append("Overpaying for long-dated extrinsic")
+
+    # Final rating
+    if score >= 6:
+        rating = "Strong Buy"
+    elif 4 <= score < 6:
+        rating = "Buy"
+    elif 2 <= score < 4:
+        rating = "Mild Buy"
+    else:
+        rating = "Avoid"
+
+    return score, rating, reasons
+
+
+# --- Streamlit app ---
+st.title("Options Evaluation Tool")
+
+uploaded_file = st.file_uploader("Upload your CSV (Ticker, Expiration, Strike, Type)", type=["csv"])
+
+if uploaded_file:
+    df = pd.read_csv(uploaded_file)
+
+    results = []
+    for idx, row in df.head(25).iterrows():
+        try:
+            ticker = yf.Ticker(row["Ticker"])
+            current_price = ticker.history(period="1d")["Close"].iloc[-1]
+
+            # Indicators
+            ma20, ma50, rsi = calculate_indicators(ticker)
+
+            # Days to expiration
+            exp_date = datetime.strptime(str(row["Expiration"]), "%Y-%m-%d")
+            days_to_exp = (exp_date - datetime.today()).days
+
+            # Option chain
+            opt_chain = ticker.option_chain(str(exp_date.date()))
+            if row["Type"].lower() == "call":
+                chain = opt_chain.calls
             else:
-                score -= 1
-                reasons.append("Weak trend (Price below MAs)")
+                chain = opt_chain.puts
 
-        # 2. RSI
-        if rsi:
-            if 50 <= rsi <= 70:
-                score += 1
-                reasons.append("RSI in bullish range (50–70)")
-            elif rsi < 30:
-                score -= 2
-                reasons.append("Oversold (<30) but risky")
-            elif rsi > 70:
-                score -= 1
-                reasons.append("Overbought (>70)")
-            else:
-                score -= 1
-                reasons.append("Neutral RSI")
+            opt = chain[chain["strike"] == float(row["Strike"])]
+            if opt.empty:
+                continue
 
-        # 3. Delta
-        if delta >= 0.7:
-            score += 2
-            reasons.append("High delta (≥0.7): Good ITM chance short-term")
-        elif 0.5 <= delta < 0.7:
-            score += 1
-            reasons.append("Moderate delta (0.5–0.7)")
-        else:
-            score -= 1
-            reasons.append("Low delta (<0.5)")
+            opt = opt.iloc[0]
+            premium = (opt["bid"] + opt["ask"]) / 2
+            iv = opt["impliedVolatility"] * 100
+            delta = opt.get("delta", np.nan)  # not always provided
+            volume = opt["volume"]
+            oi = opt["openInterest"]
 
-        # 4. IV
-        if iv > 100:
-            score -= 2
-            reasons.append(f"Very high IV ({iv:.2f}%): High premium but risky")
-        elif iv > 50:
-            score += 1
-            reasons.append(f"Moderate IV ({iv:.2f}%)")
-        else:
-            reasons.append(f"Low IV ({iv:.2f}%)")
+            # Moneyness
+            moneyness = ((current_price - row["Strike"]) / current_price) * 100 if row["Type"].lower() == "call" else ((row["Strike"] - current_price) / current_price) * 100
 
-        # 5. Liquidity
-        if volume >= 500 and oi >= 500:
-            score += 1
-            reasons.append("High liquidity (Volume & OI ≥ 500)")
-        elif volume >= 100 and oi >= 100:
-            reasons.append("Moderate liquidity")
-        else:
-            score -= 1
-            reasons.append("Low liquidity")
+            # Scoring
+            score, rating, reasons = score_option(premium, iv, delta, rsi, moneyness, days_to_exp)
 
-        # 6. Expiration
-        if days_to_exp <= 30:
-            score += 1
-            reasons.append("Short-term expiration (≤30 days)")
-        else:
-            score -= 1
-            reasons.append("Long-term expiration (>30 days)")
-
-        # 7. Moneyness
-        if moneyness > 1.2:
-            score += 1
-            reasons.append(f"Deep ITM call (moneyness={moneyness:.2f})")
-        elif moneyness > 1.0:
-            reasons.append(f"Slight ITM call (moneyness={moneyness:.2f})")
-        else:
-            score -= 1
-            reasons.append(f"OTM call (moneyness={moneyness:.2f})")
-
-        # 8. Premium valuation
-        if price:
-            fair_premium = moneyness * delta * price * 0.05  # heuristic
-            value_ratio = premium / (fair_premium + 1e-6)
-
-            if value_ratio < 0.7:
-                score += 2
-                reasons.append(f"Cheap premium (${premium:.2f}) vs fair (${fair_premium:.2f})")
-            elif 0.7 <= value_ratio <= 1.3:
-                score += 1
-                reasons.append(f"Fair premium (${premium:.2f}) vs fair (${fair_premium:.2f})")
-            else:
-                score -= 2
-                reasons.append(f"Overpriced premium (${premium:.2f}) vs fair (${fair_premium:.2f})")
-
-            if value_ratio > 0.9 and days_to_exp > 30:
-                score -= 1
-                reasons.append("Extra penalty: Overpaying on long-dated extrinsic")
-
-        # Final verdict
-        if score >= 6:
-            verdict = "Strong Buy"
-        elif 3 <= score < 6:
-            verdict = "Buy"
-        elif 1 <= score < 3:
-            verdict = "Mild Buy"
-        else:
-            verdict = "Avoid"
-
-        return verdict, score, reasons
-
-    # === Premium range testing ===
-    def premium_range_analysis(row, price, ma20, ma50, rsi):
-        results = []
-        for premium in [0.5, 1, 2, 5, 10, 20, 50]:
-            verdict, score, reasons = classify_option(row, premium, price, ma20, ma50, rsi)
             results.append({
-                "Premium": premium,
-                "Verdict": verdict,
+                "Ticker": row["Ticker"],
+                "Type": row["Type"],
+                "Strike": row["Strike"],
+                "Exp": str(exp_date.date()),
+                "Price": round(current_price, 2),
+                "Premium": round(premium, 2),
+                "MA20": round(ma20, 2),
+                "MA50": round(ma50, 2),
+                "RSI": round(rsi, 2),
+                "Delta": round(delta, 2) if pd.notna(delta) else "N/A",
+                "IV (%)": round(iv, 2),
+                "Volume": volume,
+                "Open Interest": oi,
+                "Moneyness (%)": round(moneyness, 2),
+                "Days to Exp": days_to_exp,
                 "Score": score,
-                "Reasons": reasons
+                "Rating": rating,
+                "Reasons": "; ".join(reasons)
             })
-        return results
+        except Exception as e:
+            st.warning(f"Error on row {idx}: {e}")
 
-    # === Display results ===
-    for idx, row in df.iterrows():
-        symbol = row['Symbol']
-        price, ma20, ma50, rsi = get_stock_data(symbol)
-
-        st.markdown(f"## Option {idx+1} — {symbol}")
-        st.write({
-            "Price": price,
-            "MA20": ma20,
-            "MA50": ma50,
-            "RSI": rsi,
-            "Delta": row['Delta'],
-            "IV": row['IV'],
-            "Volume": row['Volume'],
-            "Open Interest": row['Open Interest'],
-            "Moneyness": row['Moneyness'],
-            "Days to Expiration": row['Days to Expiration'],
-        })
-
-        results = premium_range_analysis(row, price, ma20, ma50, rsi)
-        for res in results:
-            st.markdown(f"**Premium ${res['Premium']:.2f} → {res['Verdict']} (Score {res['Score']})**")
-            for r in res['Reasons']:
-                st.write(f"- {r}")
+    if results:
+        st.dataframe(pd.DataFrame(results))
+    else:
+        st.error("No results to display. Check your CSV format.")
