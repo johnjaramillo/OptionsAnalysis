@@ -3,7 +3,7 @@ import pandas as pd
 import yfinance as yf
 import numpy as np
 from datetime import datetime
-import ta  # for RSI
+
 
 # --- Helper functions ---
 
@@ -167,3 +167,4 @@ if uploaded_file:
         st.dataframe(pd.DataFrame(results))
     else:
         st.error("No results to display. Check your CSV format.")
+
