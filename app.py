@@ -154,6 +154,7 @@ def main():
         return
 
     df = pd.read_csv(uploaded_file)
+    df = df.head(25)  # only first 25 rows
     df.columns = df.columns.str.strip().str.replace('"', "")
     if "Price~" in df.columns:
         df = df.sort_values(by="Price~", ascending=True)
@@ -177,3 +178,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
