@@ -30,13 +30,13 @@ def get_days_to_expiration(exp_date_str, purchase_date):
     except Exception:
         return None
 
-def score_option(row, premium, purchase_date):
+def score_option(row, premium, purchase_date, price_lookup):
     """Score and analyze an option trade."""
     reasons = []
     score = 0
 
     # Extract values
-    price = safe_float(row.get("Price~"))
+    price = price_lookup  # from yfinance
     delta = safe_float(row.get("Delta"))
     iv = safe_float(row.get("Imp Vol"))
     oi = safe_float(row.get("Open Int"))
@@ -52,6 +52,9 @@ def score_option(row, premium, purchase_date):
     ma50 = price * 0.95 if price else None
     rsi = 55 if price else None
 
+    # -----------------------------
+    # Hard filters & penalties
+    # -----------------------------
     if delta is None:
         delta = 0.0
     if option_type in ["call", "put"] and delta < 0.35:
@@ -139,17 +142,13 @@ def score_option(row, premium, purchase_date):
 
     return verdict, reasons
 
-
-def premium_range_analysis(row, purchase_date):
-    """Check verdicts across a range of premiums."""
+def premium_range_analysis(row, purchase_date, price_lookup):
+    """Run premium range analysis for different verdicts."""
     results = []
-    premium_range = [ .1, .2, .3, .4, .5, .6, .7, .8, .9, 1]  # you can expand this
-    for premium in premium_range:
-        verdict, reasons = score_option(row, premium, purchase_date)
-        results.append({
-            "Premium": premium,
-            "Verdict": verdict
-        })
+    test_premiums = np.linspace(0.5, 5.0, 10)  # adjust search range if needed
+    for prem in test_premiums:
+        verdict, _ = score_option(row, prem, purchase_date, price_lookup)
+        results.append((prem, verdict))
     return results
 
 # -----------------------------
@@ -157,7 +156,7 @@ def premium_range_analysis(row, purchase_date):
 # -----------------------------
 
 def main():
-    st.title("Options Analyzer with Premium Ranges")
+    st.title("Options Analyzer with Premium Range Verdicts")
 
     uploaded_file = st.file_uploader("Upload CSV", type=["csv"])
     if not uploaded_file:
@@ -166,20 +165,33 @@ def main():
     df = pd.read_csv(uploaded_file)
     df = df.head(25)  # only first 25 rows
     df.columns = df.columns.str.strip().str.replace('"', "")
-    if "Price~" in df.columns:
-        df = df.sort_values(by="Price~", ascending=True)
 
     for idx, row in df.iterrows():
         st.markdown("---")
         st.subheader(f"{row.get('Symbol', 'N/A')} {row.get('Type', '')} @ {row.get('Strike', 'N/A')} exp {row.get('Exp Date', '')}")
 
-        purchase_date = st.date_input(f"Purchase date for {row.get('Symbol', '')}", value=datetime.today(), key=f"date_{idx}")
+        # Lookup live stock price
+        ticker = row.get("Symbol", "")
+        try:
+            price_lookup = yf.Ticker(ticker).history(period="1d")["Close"].iloc[-1]
+        except Exception:
+            price_lookup = None
 
-        if st.button(f"Analyze {row.get('Symbol', '')}", key=f"analyze_{idx}"):
-            st.write("### Premium Range Analysis")
-            results = premium_range_analysis(row, purchase_date)
-            for res in results:
-                st.write(f"- Premium ${res['Premium']:.2f} → {res['Verdict']}")
+        purchase_date = datetime.today()
+
+        # Premium range analysis
+        ranges = premium_range_analysis(row, purchase_date, price_lookup)
+        st.write("**Premium Range Verdicts:**")
+        for prem, verdict in ranges:
+            st.write(f"${prem:.2f} → {verdict}")
+
+        # Example analysis at mid premium
+        mid_premium = 2.5
+        verdict, reasons = score_option(row, mid_premium, purchase_date, price_lookup)
+        st.write(f"**Verdict (example @ ${mid_premium:.2f}): {verdict}**")
+        st.markdown("**Reasons:**")
+        for r in reasons:
+            st.write("- " + r)
 
 if __name__ == "__main__":
     main()
