@@ -52,9 +52,6 @@ def score_option(row, premium, purchase_date):
     ma50 = price * 0.95 if price else None
     rsi = 55 if price else None
 
-    # -----------------------------
-    # Hard filters & penalties
-    # -----------------------------
     if delta is None:
         delta = 0.0
     if option_type in ["call", "put"] and delta < 0.35:
@@ -142,12 +139,25 @@ def score_option(row, premium, purchase_date):
 
     return verdict, reasons
 
+
+def premium_range_analysis(row, purchase_date):
+    """Check verdicts across a range of premiums."""
+    results = []
+    premium_range = [ .1, .2, .3, .4, .5, .6, .7, .8, .9, 1]  # you can expand this
+    for premium in premium_range:
+        verdict, reasons = score_option(row, premium, purchase_date)
+        results.append({
+            "Premium": premium,
+            "Verdict": verdict
+        })
+    return results
+
 # -----------------------------
 # Streamlit UI
 # -----------------------------
 
 def main():
-    st.title("Options Analyzer with Smarter Verdicts")
+    st.title("Options Analyzer with Premium Ranges")
 
     uploaded_file = st.file_uploader("Upload CSV", type=["csv"])
     if not uploaded_file:
@@ -163,19 +173,13 @@ def main():
         st.markdown("---")
         st.subheader(f"{row.get('Symbol', 'N/A')} {row.get('Type', '')} @ {row.get('Strike', 'N/A')} exp {row.get('Exp Date', '')}")
 
-        col1, col2 = st.columns(2)
-        with col1:
-            premium = st.number_input(f"Premium for {row.get('Symbol', '')}", min_value=0.01, step=0.01, key=f"prem_{idx}")
-        with col2:
-            purchase_date = st.date_input(f"Purchase date for {row.get('Symbol', '')}", value=datetime.today(), key=f"date_{idx}")
+        purchase_date = st.date_input(f"Purchase date for {row.get('Symbol', '')}", value=datetime.today(), key=f"date_{idx}")
 
         if st.button(f"Analyze {row.get('Symbol', '')}", key=f"analyze_{idx}"):
-            verdict, reasons = score_option(row, premium, purchase_date)
-            st.write(f"**Verdict: {verdict}**")
-            st.markdown("**Reasons:**")
-            for r in reasons:
-                st.write("- " + r)
+            st.write("### Premium Range Analysis")
+            results = premium_range_analysis(row, purchase_date)
+            for res in results:
+                st.write(f"- Premium ${res['Premium']:.2f} → {res['Verdict']}")
 
 if __name__ == "__main__":
     main()
-
