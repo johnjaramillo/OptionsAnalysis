@@ -184,12 +184,13 @@ def main():
             for r in reasons:
                 st.write("- " + r)
         # Premium range analysis
-        ranges = premium_range_analysis(row, purchase_date, price_lookup)
+        ranges = premium_range_analysis(row, purchase_date, price)
         st.write("**Premium Range Verdicts:**")
         for prem, verdict in ranges:
             st.write(f"${prem:.2f} → {verdict}")
             
 if __name__ == "__main__":
     main()
+
 
 
