@@ -147,7 +147,7 @@ def premium_range_analysis(row, purchase_date, price_lookup):
     results = []
     test_premiums = np.linspace(0.5, 5.0, 10)  # adjust search range if needed
     for prem in test_premiums:
-        verdict, _ = score_option(row, prem, purchase_date, price_lookup)
+        verdict, _ = score_option(row, prem, purchase_date, price)
         results.append((prem, verdict))
     return results
 # -----------------------------
@@ -191,4 +191,5 @@ def main():
             
 if __name__ == "__main__":
     main()
+
 
