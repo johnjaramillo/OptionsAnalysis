@@ -142,14 +142,7 @@ def score_option(row, premium, purchase_date):
 
     return verdict, reasons
 
-def premium_range_analysis(row, purchase_date, price_lookup):
-    """Run premium range analysis for different verdicts."""
-    results = []
-    test_premiums = np.linspace(0.5, 5.0, 10)  # adjust search range if needed
-    for prem in test_premiums:
-        verdict, _ = score_option(row, prem, purchase_date, price)
-        results.append((prem, verdict))
-    return results
+
 # -----------------------------
 # Streamlit UI
 # -----------------------------
@@ -183,14 +176,10 @@ def main():
             st.markdown("**Reasons:**")
             for r in reasons:
                 st.write("- " + r)
-        # Premium range analysis
-        ranges = premium_range_analysis(row, purchase_date, price)
-        st.write("**Premium Range Verdicts:**")
-        for prem, verdict in ranges:
-            st.write(f"${prem:.2f} → {verdict}")
-            
+ 
 if __name__ == "__main__":
     main()
+
 
 
 
